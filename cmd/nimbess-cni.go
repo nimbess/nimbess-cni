@@ -26,12 +26,12 @@ import (
 	"os"
 	"time"
 
-	"github.com/containernetworking/plugins/pkg/ns"
-
 	"github.com/containernetworking/cni/pkg/skel"
 	"github.com/containernetworking/cni/pkg/types"
 	"github.com/containernetworking/cni/pkg/version"
 	"github.com/containernetworking/plugins/pkg/ipam"
+	"github.com/containernetworking/plugins/pkg/ns"
+	"github.com/j-keck/arping"
 	"google.golang.org/grpc"
 
 	cnitypes "github.com/containernetworking/cni/pkg/types/current"
@@ -340,6 +340,15 @@ func cmdDel(args *skel.CmdArgs) error {
 	// Prepare CNI Request for Network Config
 	cniRequestNW := &cninimbess.CNIRequest_NetworkConfig{}
 
+	// Prepare CNI request
+	cniRequest := &cninimbess.CNIRequest{
+		Version:          conf.CNIVersion,
+		ContainerId:      args.ContainerID,
+		NetworkNamespace: args.Netns,
+		InterfaceName:    args.IfName,
+		NetworkConfig:    cniRequestNW,
+		ExtraArguments:   cniRequestNW.Args,
+	}
 	// execute the DELETE request
 	_, err = c.Delete(context.Background(), &cninimbess.CNIRequest{
 		Version:          conf.CNIVersion,
@@ -354,7 +363,10 @@ func cmdDel(args *skel.CmdArgs) error {
 		return err
 	}
 
-	// TODO: handle IPAM deletion of IPs
+	err = ipam.ExecDel(cniRequest.IpamType, args.StdinData)
+	if err != nil {
+		return err
+	}
 
 	log.Debugf("CNI DEL request OK, took %s", time.Since(start))
 
