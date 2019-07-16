@@ -191,11 +191,12 @@ func cmdAdd(args *skel.CmdArgs) error {
 		})
 		for _, ip := range iface.IpAddresses {
 			// append interface ip address info
-			_, ipAddr, err := net.ParseCIDR(ip.Address)
+			ipAddr, ipNet, err := net.ParseCIDR(ip.Address)
 			if err != nil {
 				log.Error(err)
 				return err
 			}
+			ipNet.IP = ipAddr
 			var gwAddr net.IP
 			if ip.Gateway != "" {
 				gwAddr = net.ParseIP(ip.Gateway)
@@ -209,7 +210,7 @@ func cmdAdd(args *skel.CmdArgs) error {
 				ver = "6"
 			}
 			cniResult.IPs = append(cniResult.IPs, &cnitypes.IPConfig{
-				Address:   *ipAddr,
+				Address:   *ipNet,
 				Version:   ver,
 				Interface: &ifidx,
 				Gateway:   gwAddr,
