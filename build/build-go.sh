@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -eu
 eval $(go env | grep -e "GOHOSTOS" -e "GOHOSTARCH")
+echo $GOPATH
 GOOS=${GOOS:-${GOHOSTOS}}
 GOARCH=${GOACH:-${GOHOSTARCH}}
 GOFLAGS=${GOFLAGS:-}
