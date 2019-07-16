@@ -20,14 +20,18 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
 	"time"
 
+	"github.com/containernetworking/plugins/pkg/ns"
+
 	"github.com/containernetworking/cni/pkg/skel"
 	"github.com/containernetworking/cni/pkg/types"
 	"github.com/containernetworking/cni/pkg/version"
+	"github.com/containernetworking/plugins/pkg/ipam"
 	"google.golang.org/grpc"
 
 	cnitypes "github.com/containernetworking/cni/pkg/types/current"
@@ -133,6 +137,12 @@ func cmdAdd(args *skel.CmdArgs) error {
 		return err
 	}
 
+	netns, err := ns.GetNS(args.Netns)
+	if err != nil {
+		return fmt.Errorf("Failed to open netns %q: %v", netns, err)
+	}
+	defer netns.Close()
+
 	// Init the logger
 	err = initLog(conf.LogFile)
 	if err != nil {
@@ -164,7 +174,54 @@ func cmdAdd(args *skel.CmdArgs) error {
 		CNIVersion: conf.CNIVersion,
 	}
 
-	// TODO: handle IPAM type and data
+	// Run the IPAM plugin and get back the config to apply
+	ipamRequest, err := ipam.ExecAdd(cniRequest.IpamType, args.StdinData)
+	if err != nil {
+		return err
+	}
+
+	// Invoke ipam del if err to avoid ip leak
+	defer func() {
+		if err != nil {
+			ipam.ExecDel(cniRequest.IpamType, args.StdinData)
+		}
+	}()
+
+	// Convert whatever the IPAM result was into the current Result type
+	ipamResult, err := cnitypes.NewResultFromResult(ipamRequest)
+	if err != nil {
+		return err
+	}
+
+	if len(ipamResult.IPs) == 0 {
+		return errors.New("IPAM plugin returned missing IP config")
+	}
+
+	cniResult.IPs = ipamResult.IPs
+	cniResult.Routes = ipamResult.Routes
+
+	for _, ipc := range cniResult.IPs {
+		// All addresses apply to the container Nimbess interface
+		ipc.Interface = cnitypes.Int(0)
+	}
+
+	err = netns.Do(func(_ ns.NetNS) error {
+		if err := ipam.ConfigureIface(args.IfName, cniResult); err != nil {
+			return err
+		}
+
+		contVeth, err := net.InterfaceByName(args.IfName)
+		if err != nil {
+			return fmt.Errorf("Failed to look up %q: %v", args.IfName, err)
+		}
+
+		for _, ipc := range cniResult.IPs {
+			if ipc.Version == "4" {
+				_ = arping.GratuitousArpOverIface(ipc.Address.IP, *contVeth)
+			}
+		}
+		return nil
+	})
 
 	// Connect to the remote CNI handler over gRPC
 	conn, c, err := grpcConnect(conf.GrpcServer)
