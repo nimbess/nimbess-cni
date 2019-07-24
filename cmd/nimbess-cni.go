@@ -42,6 +42,24 @@ import (
 
 const defaultLogFile = "/var/log/nimbess/nimbess-cni.log"
 
+// NinbessNetworkConfig describes a network to which a container can be joined
+type nimbessNetworkConfig struct {
+	// CNIVersion
+	CNIVersion string `json:"cniVersion"`
+	// Network name that is unique across all containers on the host
+	Name string `json:"name"`
+
+	// Filename of CNI plugin executable
+	Type string `json:"type"`
+
+	// Additional dictionary arguments provided by container runtime (optional)
+	Args map[string]string `json:"Args"`
+
+	// Sets up IP masquerade on the host for this network. Optional.
+	IpMasq bool                     `json:"ipMasq"`
+	Dns    *cninimbess.CNIReply_DNS `json:"dns"`
+}
+
 // NimbessConfig is whatever you expect your configuration json to be. This is whatever
 // is passed in on stdin. Your plugin may wish to expose its functionality via
 // runtime args, see CONVENTIONS.md in the CNI spec.
@@ -64,6 +82,9 @@ type nimbessConfig struct {
 	// EtcdEndpoints is a plugin-specific config, may contain comma-separated list of ETCD endpoints
 	// required for specific for the CNI / IPAM plugin.
 	EtcdEndpoints string `json:"etcdEndpoints"`
+
+	// NetworkConfig describes a network to which a container can be joined
+	NetworkConfig nimbessNetworkConfig `json:"networkConfig"`
 }
 
 // grpcConnect sets up a connection to the gRPC server specified in grpcServer argument
@@ -158,7 +179,14 @@ func cmdAdd(args *skel.CmdArgs) error {
 	}).Debug("CNI ADD request")
 
 	// Prepare CNI Request for Network Config
-	cniRequestNW := &cninimbess.CNIRequest_NetworkConfig{}
+	cniRequestNW := &cninimbess.CNIRequest_NetworkConfig{
+		CniVersion: conf.CNIVersion,
+		Name:       conf.NetworkConfig.Name,
+		Type:       conf.NetworkConfig.Type,
+		Args:       conf.NetworkConfig.Args,
+		IpMasq:     conf.NetworkConfig.IpMasq,
+		Dns:        conf.NetworkConfig.Dns,
+	}
 
 	// Prepare CNI request
 	cniRequest := &cninimbess.CNIRequest{
