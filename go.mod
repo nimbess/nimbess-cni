@@ -1,6 +1,6 @@
-module github.com/oglok/nimbess-cni
+module github.com/nimbess/nimbess-cni
 
-go 1.12
+go 1.11
 
 require (
 	github.com/Bowery/prompt v0.0.0-20190419144237-972d0ceb96f5 // indirect
