@@ -38,6 +38,15 @@ import (
 
 const defaultLogFile = "/var/log/nimbess/nimbess-cni.log"
 
+// K8sArgs is the valid CNI_ARGS used for Kubernetes
+type k8sArgs struct {
+	types.CommonArgs
+	IP                         net.IP
+	K8S_POD_NAME               types.UnmarshallableString
+	K8S_POD_NAMESPACE          types.UnmarshallableString
+	K8S_POD_INFRA_CONTAINER_ID types.UnmarshallableString
+}
+
 // NimbessConfig is whatever you expect your configuration json to be. This is whatever
 // is passed in on stdin. Your plugin may wish to expose its functionality via
 // runtime args, see CONVENTIONS.md in the CNI spec.
@@ -147,6 +156,12 @@ func cmdAdd(args *skel.CmdArgs) error {
 		"Args":        args.Args,
 	}).Debug("CNI ADD request")
 
+	k8Arg := &k8sArgs{}
+	if err := types.LoadArgs(args.Args, k8Arg); err != nil {
+		log.Errorf("Unable to parse Pod name or namespace: %v", err)
+		return err
+	}
+
 	// Prepare CNI Request for Network Config
 	cniRequestNW := &cninimbess.CNIRequest_NetworkConfig{}
 
@@ -158,6 +173,8 @@ func cmdAdd(args *skel.CmdArgs) error {
 		InterfaceName:    args.IfName,
 		NetworkConfig:    cniRequestNW,
 		ExtraArguments:   cniRequestNW.Args,
+		PodName:          string(k8Arg.K8S_POD_NAME),
+		PodNamespace:     string(k8Arg.K8S_POD_NAMESPACE),
 	}
 
 	cniResult := &cnitypes.Result{
