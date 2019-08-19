@@ -1,5 +1,6 @@
 FROM golang:1.11
 WORKDIR $GOPATH/src/github.com/nimbess/nimbess-cni
+ENV GO111MODULE=on
 COPY . .
 RUN ./build/build-go.sh
 
