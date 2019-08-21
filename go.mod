@@ -1,4 +1,9 @@
 module github.com/nimbess/nimbess-cni
+<<<<<<< HEAD
+=======
+
+go 1.11
+>>>>>>> e60e0bcacb4ca0981d3424c999e33e785ac692c8
 
 require (
 	cloud.google.com/go v0.44.3 // indirect

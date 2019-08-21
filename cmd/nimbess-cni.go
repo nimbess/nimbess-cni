@@ -67,6 +67,10 @@ type nimbessNetworkConfig struct {
 	// Sets up IP masquerade on the host for this network. Optional.
 	IpMasq bool                     `json:"ipMasq"`
 	Dns    *cninimbess.CNIReply_DNS `json:"dns"`
+
+	// IPAM information
+	IpamType string            `json:"ipamType`
+	IpamData map[string]string `json:"ipamData"`
 }
 
 // NimbessConfig is whatever you expect your configuration json to be. This is whatever
@@ -205,6 +209,8 @@ func cmdAdd(args *skel.CmdArgs) error {
 		Args:       conf.NetworkConfig.Args,
 		IpMasq:     conf.NetworkConfig.IpMasq,
 		Dns:        conf.NetworkConfig.Dns,
+		IpamType:   conf.NetworkConfig.IpamType
+		IpamData:   conf.NetworkConfig.IpamData
 	}
 
 	// Prepare CNI request
@@ -225,12 +231,6 @@ func cmdAdd(args *skel.CmdArgs) error {
 		CNIVersion: conf.CNIVersion,
 	}
 
-	// Run the IPAM plugin and get back the config to apply
-	ipamRequest, err := ipam.ExecAdd(cniRequest.IpamType, args.StdinData)
-	if err != nil {
-		return err
-	}
-
 	// Invoke ipam del if err to avoid ip leak
 	defer func() {
 		if err != nil {
@@ -238,7 +238,13 @@ func cmdAdd(args *skel.CmdArgs) error {
 		}
 	}()
 
-	// Convert whatever the IPAM result was into the current Result type
+	// Run the IPAM plugin and get back the config to apply
+	ipamRequest, err := ipam.ExecAdd(cniRequest.IpamType, args.StdinData)
+	if err != nil {
+		return err
+	}
+
+	// Convert IPAM result received to the correct format for the result version
 	ipamResult, err := cnitypes.NewResultFromResult(ipamRequest)
 	if err != nil {
 		return err
