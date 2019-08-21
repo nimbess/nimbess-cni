@@ -94,6 +94,9 @@ type nimbessConfig struct {
 
 	// NetworkConfig describes a network to which a container can be joined
 	NetworkConfig nimbessNetworkConfig `json:"networkConfig"`
+
+	IpamType string `json:"ipamType"`
+	IpamData *cninimbess.CNIRequest.IpamType string `json:"ipamData"`
 }
 
 // grpcConnect sets up a connection to the gRPC server specified in grpcServer argument
@@ -211,6 +214,8 @@ func cmdAdd(args *skel.CmdArgs) error {
 		InterfaceName:    args.IfName,
 		NetworkConfig:    cniRequestNW,
 		ExtraArguments:   cniRequestNW.Args,
+		IpamType:         conf.IpamType,
+		IpamData:         conf.IpamData,
 		PodName:          string(k8Arg.K8S_POD_NAME),
 		PodNamespace:     string(k8Arg.K8S_POD_NAMESPACE),
 	}
