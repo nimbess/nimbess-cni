@@ -42,6 +42,15 @@ import (
 
 const defaultLogFile = "/var/log/nimbess/nimbess-cni.log"
 
+// K8sArgs is the valid CNI_ARGS used for Kubernetes
+type k8sArgs struct {
+	types.CommonArgs
+	IP                         net.IP
+	K8S_POD_NAME               types.UnmarshallableString
+	K8S_POD_NAMESPACE          types.UnmarshallableString
+	K8S_POD_INFRA_CONTAINER_ID types.UnmarshallableString
+}
+
 // NinbessNetworkConfig describes a network to which a container can be joined
 type nimbessNetworkConfig struct {
 	// CNIVersion
@@ -85,6 +94,10 @@ type nimbessConfig struct {
 
 	// NetworkConfig describes a network to which a container can be joined
 	NetworkConfig nimbessNetworkConfig `json:"networkConfig"`
+
+	// IPAM information
+	IpamType string `json:"ipamType"`
+	IpamData string `json:"ipamData"`
 }
 
 // grpcConnect sets up a connection to the gRPC server specified in grpcServer argument
@@ -178,6 +191,12 @@ func cmdAdd(args *skel.CmdArgs) error {
 		"Args":        args.Args,
 	}).Debug("CNI ADD request")
 
+	k8Arg := &k8sArgs{}
+	if err := types.LoadArgs(args.Args, k8Arg); err != nil {
+		log.Errorf("Unable to parse Pod name or namespace: %v", err)
+		return err
+	}
+
 	// Prepare CNI Request for Network Config
 	cniRequestNW := &cninimbess.CNIRequest_NetworkConfig{
 		CniVersion: conf.CNIVersion,
@@ -196,6 +215,10 @@ func cmdAdd(args *skel.CmdArgs) error {
 		InterfaceName:    args.IfName,
 		NetworkConfig:    cniRequestNW,
 		ExtraArguments:   cniRequestNW.Args,
+		IpamType:         conf.IpamType,
+		IpamData:         conf.IpamData,
+		PodName:          string(k8Arg.K8S_POD_NAME),
+		PodNamespace:     string(k8Arg.K8S_POD_NAMESPACE),
 	}
 
 	cniResult := &cnitypes.Result{
@@ -276,11 +299,12 @@ func cmdAdd(args *skel.CmdArgs) error {
 		})
 		for _, ip := range iface.IpAddresses {
 			// append interface ip address info
-			_, ipAddr, err := net.ParseCIDR(ip.Address)
+			ipAddr, ipNet, err := net.ParseCIDR(ip.Address)
 			if err != nil {
 				log.Error(err)
 				return err
 			}
+			ipNet.IP = ipAddr
 			var gwAddr net.IP
 			if ip.Gateway != "" {
 				gwAddr = net.ParseIP(ip.Gateway)
@@ -294,7 +318,7 @@ func cmdAdd(args *skel.CmdArgs) error {
 				ver = "6"
 			}
 			cniResult.IPs = append(cniResult.IPs, &cnitypes.IPConfig{
-				Address:   *ipAddr,
+				Address:   *ipNet,
 				Version:   ver,
 				Interface: &ifidx,
 				Gateway:   gwAddr,
