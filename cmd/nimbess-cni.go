@@ -20,6 +20,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -28,6 +29,8 @@ import (
 	"github.com/containernetworking/cni/pkg/skel"
 	"github.com/containernetworking/cni/pkg/types"
 	"github.com/containernetworking/cni/pkg/version"
+	"github.com/containernetworking/plugins/pkg/ipam"
+	"github.com/containernetworking/plugins/pkg/ns"
 	"google.golang.org/grpc"
 
 	cnitypes "github.com/containernetworking/cni/pkg/types/current"
@@ -45,6 +48,24 @@ type k8sArgs struct {
 	K8S_POD_NAME               types.UnmarshallableString
 	K8S_POD_NAMESPACE          types.UnmarshallableString
 	K8S_POD_INFRA_CONTAINER_ID types.UnmarshallableString
+}
+
+// NinbessNetworkConfig describes a network to which a container can be joined
+type nimbessNetworkConfig struct {
+	// CNIVersion
+	CNIVersion string `json:"cniVersion"`
+	// Network name that is unique across all containers on the host
+	Name string `json:"name"`
+
+	// Filename of CNI plugin executable
+	Type string `json:"type"`
+
+	// Additional dictionary arguments provided by container runtime (optional)
+	Args map[string]string `json:"Args"`
+
+	// Sets up IP masquerade on the host for this network. Optional.
+	IpMasq bool                     `json:"ipMasq"`
+	Dns    *cninimbess.CNIReply_DNS `json:"dns"`
 }
 
 // NimbessConfig is whatever you expect your configuration json to be. This is whatever
@@ -69,6 +90,12 @@ type nimbessConfig struct {
 	// EtcdEndpoints is a plugin-specific config, may contain comma-separated list of ETCD endpoints
 	// required for specific for the CNI / IPAM plugin.
 	EtcdEndpoints string `json:"etcdEndpoints"`
+
+	// NetworkConfig describes a network to which a container can be joined
+	NetworkConfig nimbessNetworkConfig `json:"networkConfig"`
+
+	// IPAM information
+	IpamType string `json:"ipamType"`
 }
 
 // grpcConnect sets up a connection to the gRPC server specified in grpcServer argument
@@ -142,6 +169,12 @@ func cmdAdd(args *skel.CmdArgs) error {
 		return err
 	}
 
+	netns, err := ns.GetNS(args.Netns)
+	if err != nil {
+		return fmt.Errorf("Failed to open netns %q: %v", netns, err)
+	}
+	defer netns.Close()
+
 	// Init the logger
 	err = initLog(conf.LogFile)
 	if err != nil {
@@ -163,7 +196,14 @@ func cmdAdd(args *skel.CmdArgs) error {
 	}
 
 	// Prepare CNI Request for Network Config
-	cniRequestNW := &cninimbess.CNIRequest_NetworkConfig{}
+	cniRequestNW := &cninimbess.CNIRequest_NetworkConfig{
+		CniVersion: conf.CNIVersion,
+		Name:       conf.NetworkConfig.Name,
+		Type:       conf.NetworkConfig.Type,
+		Args:       conf.NetworkConfig.Args,
+		IpMasq:     conf.NetworkConfig.IpMasq,
+		Dns:        conf.NetworkConfig.Dns,
+	}
 
 	// Prepare CNI request
 	cniRequest := &cninimbess.CNIRequest{
@@ -173,6 +213,7 @@ func cmdAdd(args *skel.CmdArgs) error {
 		InterfaceName:    args.IfName,
 		NetworkConfig:    cniRequestNW,
 		ExtraArguments:   cniRequestNW.Args,
+		IpamType:         conf.IPAM.Type,
 		PodName:          string(k8Arg.K8S_POD_NAME),
 		PodNamespace:     string(k8Arg.K8S_POD_NAMESPACE),
 	}
@@ -181,7 +222,37 @@ func cmdAdd(args *skel.CmdArgs) error {
 		CNIVersion: conf.CNIVersion,
 	}
 
-	// TODO: handle IPAM type and data
+	// Invoke ipam del if err to avoid ip leak
+	defer func() {
+		if err != nil {
+			ipam.ExecDel(cniRequest.IpamType, args.StdinData)
+		}
+	}()
+
+	// Run the IPAM plugin and get back the config to apply
+	ipamRequest, err := ipam.ExecAdd(cniRequest.IpamType, args.StdinData)
+	if err != nil {
+		return err
+	}
+
+	// Convert IPAM result received to the correct format for the result version
+	ipamResult, err := cnitypes.NewResultFromResult(ipamRequest)
+	if err != nil {
+		return err
+	}
+
+	if len(ipamResult.IPs) == 0 {
+		return errors.New("IPAM plugin returned missing IP config")
+	}
+
+	cniResult.IPs = ipamResult.IPs
+	cniResult.Routes = ipamResult.Routes
+	cniResult.DNS = ipamResult.DNS
+
+	for _, ipc := range cniResult.IPs {
+		// All addresses apply to the container Nimbess interface
+		ipc.Interface = cnitypes.Int(0)
+	}
 
 	// Connect to the remote CNI handler over gRPC
 	conn, c, err := grpcConnect(conf.GrpcServer)
@@ -301,6 +372,15 @@ func cmdDel(args *skel.CmdArgs) error {
 	// Prepare CNI Request for Network Config
 	cniRequestNW := &cninimbess.CNIRequest_NetworkConfig{}
 
+	// Prepare CNI request
+	cniRequest := &cninimbess.CNIRequest{
+		Version:          conf.CNIVersion,
+		ContainerId:      args.ContainerID,
+		NetworkNamespace: args.Netns,
+		InterfaceName:    args.IfName,
+		NetworkConfig:    cniRequestNW,
+		ExtraArguments:   cniRequestNW.Args,
+	}
 	// execute the DELETE request
 	_, err = c.Delete(context.Background(), &cninimbess.CNIRequest{
 		Version:          conf.CNIVersion,
@@ -315,7 +395,10 @@ func cmdDel(args *skel.CmdArgs) error {
 		return err
 	}
 
-	// TODO: handle IPAM deletion of IPs
+	err = ipam.ExecDel(cniRequest.IpamType, args.StdinData)
+	if err != nil {
+		return err
+	}
 
 	log.Debugf("CNI DEL request OK, took %s", time.Since(start))
 
