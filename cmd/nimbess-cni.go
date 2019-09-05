@@ -230,15 +230,21 @@ func cmdAdd(args *skel.CmdArgs) error {
 	}()
 
 	// Run the IPAM plugin and get back the config to apply
-	ipamRequest, err := ipam.ExecAdd(cniRequest.IpamType, args.StdinData)
-	if err != nil {
-		return err
+	var ipamRequest types.Result
+	if cniRequest.IpamType != "nimbess" {
+		ipamRequest, err = ipam.ExecAdd(cniRequest.IpamType, args.StdinData)
+		if err != nil {
+			return err
+		}
 	}
 
 	// Convert IPAM result received to the correct format for the result version
-	ipamResult, err := cnitypes.NewResultFromResult(ipamRequest)
-	if err != nil {
-		return err
+	ipamResult := &cnitypes.Result{}
+	if cniRequest.IpamType != "nimbess" {
+		ipamResult, err = cnitypes.NewResultFromResult(ipamRequest)
+		if err != nil {
+			return err
+		}
 	}
 
 	if len(ipamResult.IPs) == 0 {
