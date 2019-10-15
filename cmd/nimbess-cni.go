@@ -30,7 +30,6 @@ import (
 	"github.com/containernetworking/cni/pkg/types"
 	"github.com/containernetworking/cni/pkg/version"
 	"github.com/containernetworking/plugins/pkg/ipam"
-	"github.com/containernetworking/plugins/pkg/ns"
 	"google.golang.org/grpc"
 
 	cnitypes "github.com/containernetworking/cni/pkg/types/current"
@@ -168,12 +167,6 @@ func cmdAdd(args *skel.CmdArgs) error {
 	if err != nil {
 		return err
 	}
-
-	netns, err := ns.GetNS(args.Netns)
-	if err != nil {
-		return fmt.Errorf("Failed to open netns %q: %v", netns, err)
-	}
-	defer netns.Close()
 
 	// Init the logger
 	err = initLog(conf.LogFile)
