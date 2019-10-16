@@ -238,10 +238,9 @@ func cmdAdd(args *skel.CmdArgs) error {
 		if err != nil {
 			return err
 		}
-	}
-
-	if len(ipamResult.IPs) == 0 {
-		return errors.New("IPAM plugin returned missing IP config")
+		if len(ipamResult.IPs) == 0 {
+			return errors.New("IPAM plugin returned missing IP config")
+		}
 	}
 
 	cniResult.IPs = ipamResult.IPs
