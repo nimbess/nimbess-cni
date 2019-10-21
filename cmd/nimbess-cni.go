@@ -130,11 +130,6 @@ func parseCNIConfig(bytes []byte) (*nimbessConfig, error) {
 		return nil, fmt.Errorf("failed to load plugin config: %v", err)
 	}
 
-	// CNI chaining is not supported by this plugin, print out an error in case it was chained
-	if conf.PrevResult != nil {
-		return nil, fmt.Errorf("CNI chaining is not supported by this plugin")
-	}
-
 	// grpcServer is mandatory
 	if conf.GrpcServer == "" {
 		return nil, fmt.Errorf(`"grpcServer" field is required. It specifies where the CNI requests should be forwarded to`)
@@ -160,10 +155,12 @@ func initLog(fileName string) error {
 // cmdAdd implements the CNI requests to add a container to a network
 // It forwards the requests to the remote gRPC server and prints the results received from it.
 func cmdAdd(args *skel.CmdArgs) error {
+	var err error
+	var conf *nimbessConfig
 	start := time.Now()
 
 	// Parse the CNI config
-	conf, err := parseCNIConfig(args.StdinData)
+	conf, err = parseCNIConfig(args.StdinData)
 	if err != nil {
 		return err
 	}
@@ -223,18 +220,15 @@ func cmdAdd(args *skel.CmdArgs) error {
 	}()
 
 	// Run the IPAM plugin and get back the config to apply
-	var ipamRequest types.Result
+	var ipamRes types.Result
+	ipamResult := &cnitypes.Result{}
 	if cniRequest.IpamType != "nimbess" {
-		ipamRequest, err = ipam.ExecAdd(cniRequest.IpamType, args.StdinData)
+		ipamRes, err = ipam.ExecAdd(cniRequest.IpamType, args.StdinData)
 		if err != nil {
 			return err
 		}
-	}
-
-	// Convert IPAM result received to the correct format for the result version
-	ipamResult := &cnitypes.Result{}
-	if cniRequest.IpamType != "nimbess" {
-		ipamResult, err = cnitypes.NewResultFromResult(ipamRequest)
+		// Convert IPAM result received to the correct format for the result version
+		ipamResult, err = cnitypes.NewResultFromResult(ipamRes)
 		if err != nil {
 			return err
 		}
@@ -286,9 +280,8 @@ func cmdAdd(args *skel.CmdArgs) error {
 			var gwAddr net.IP
 			if ip.Gateway != "" {
 				gwAddr = net.ParseIP(ip.Gateway)
-				if err != nil {
-					log.Error(err)
-					return err
+				if gwAddr == nil {
+					log.Warningf("Failed to parse gateway: %s", ip.Gateway)
 				}
 			}
 			ver := "4"
@@ -312,9 +305,8 @@ func cmdAdd(args *skel.CmdArgs) error {
 			return err
 		}
 		gwAddr := net.ParseIP(route.Gw)
-		if err != nil {
-			log.Error(err)
-			return err
+		if gwAddr == nil {
+			log.Warningf("Failed to parse gateway: %s", route.Gw)
 		}
 		cniResult.Routes = append(cniResult.Routes, &types.Route{
 			Dst: *dstIP,
@@ -368,7 +360,9 @@ func cmdDel(args *skel.CmdArgs) error {
 	defer conn.Close()
 
 	// Prepare CNI Request for Network Config
-	cniRequestNW := &cninimbess.CNIRequest_NetworkConfig{}
+	cniRequestNW := &cninimbess.CNIRequest_NetworkConfig{
+		CniVersion: conf.CNIVersion,
+	}
 
 	// Prepare CNI request
 	cniRequest := &cninimbess.CNIRequest{
@@ -393,9 +387,11 @@ func cmdDel(args *skel.CmdArgs) error {
 		return err
 	}
 
-	err = ipam.ExecDel(cniRequest.IpamType, args.StdinData)
-	if err != nil {
-		return err
+	if cniRequest.IpamType != "nimbess" {
+		err = ipam.ExecDel(cniRequest.IpamType, args.StdinData)
+		if err != nil {
+			return err
+		}
 	}
 
 	log.Debugf("CNI DEL request OK, took %s", time.Since(start))
